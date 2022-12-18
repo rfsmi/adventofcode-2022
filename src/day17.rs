@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    iter::{once, zip},
-};
+use std::{collections::BTreeMap, iter::zip};
 
 use itertools::Itertools;
 
@@ -70,7 +67,7 @@ impl Board {
 
     fn play_single_iteration(
         &mut self,
-        dirs: &mut impl Iterator<Item = (usize, Dir)>,
+        dirs: &mut impl Iterator<Item = (usize, i8)>,
         shapes: &mut impl Iterator<Item = (usize, Shape)>,
     ) -> (usize, usize) {
         let (shape_index, mut shape) = shapes.next().unwrap();
@@ -89,33 +86,6 @@ impl Board {
             shape_bottom -= 1;
         };
         (shape_index, dir_index)
-    }
-
-    fn to_string(&self, shape: &Shape, shape_bottom: isize) -> String {
-        let shape_bottom = shape_bottom as usize;
-        let shape_top = shape_bottom + shape.rows.len();
-        let mut result = String::new();
-        for height in (0..self.rows.len().max(shape_top)).rev().take(15) {
-            let mut row = vec!['.'; WIDTH as usize];
-            if height < self.rows.len() {
-                let b = &self.rows[height];
-                for i in 0..WIDTH {
-                    if b & (1 << 7 - i) != 0 {
-                        row[i as usize] = '#';
-                    }
-                }
-            }
-            if height >= shape_bottom && height < shape_top {
-                let b = &shape.rows[height - shape_bottom];
-                for i in 0..WIDTH {
-                    if b & (1 << 7 - i) != 0 {
-                        row[i as usize] = '@';
-                    }
-                }
-            }
-            result.extend(row.into_iter().chain(once('\n')));
-        }
-        result
     }
 }
 
@@ -140,11 +110,11 @@ impl Shape {
             first_col,
             last_col,
         };
-        result.shift_impl(STARTING_COL - first_col);
+        result.shift(STARTING_COL - first_col);
         result
     }
 
-    fn shift_impl(&mut self, amount: i8) {
+    fn shift(&mut self, amount: i8) {
         if self.first_col + amount < 0 || self.last_col + amount >= WIDTH {
             return;
         }
@@ -158,120 +128,94 @@ impl Shape {
         self.first_col += amount;
         self.last_col += amount;
     }
-
-    fn shift(&mut self, dir: Dir) {
-        match dir {
-            Dir::Left => self.shift_impl(-1),
-            Dir::Right => self.shift_impl(1),
-        }
-    }
-
-    #[rustfmt::skip]
-    fn spawn() -> impl Iterator<Item = (usize, Shape)> {
-        [
-            Shape::new(&[
-                &[1, 1, 1, 1],
-            ]),
-            Shape::new(&[
-                &[0, 1, 0],
-                &[1, 1, 1],
-                &[0, 1, 0],
-            ]),
-            Shape::new(&[
-                &[0, 0, 1],
-                &[0, 0, 1],
-                &[1, 1, 1],
-            ]),
-            Shape::new(&[
-                &[1],
-                &[1],
-                &[1],
-                &[1],
-            ]),
-            Shape::new(&[
-                &[1, 1],
-                &[1, 1],
-            ]),
-        ]
-        .into_iter()
-        .enumerate()
-        .cycle()
-    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Dir {
-    Left,
-    Right,
+#[rustfmt::skip]
+fn spawn_shapes() -> impl Iterator<Item = (usize, Shape)> {
+    [
+        Shape::new(&[
+            &[1, 1, 1, 1],
+        ]),
+        Shape::new(&[
+            &[0, 1, 0],
+            &[1, 1, 1],
+            &[0, 1, 0],
+        ]),
+        Shape::new(&[
+            &[0, 0, 1],
+            &[0, 0, 1],
+            &[1, 1, 1],
+        ]),
+        Shape::new(&[
+            &[1],
+            &[1],
+            &[1],
+            &[1],
+        ]),
+        Shape::new(&[
+            &[1, 1],
+            &[1, 1],
+        ]),
+    ]
+    .into_iter()
+    .enumerate()
+    .cycle()
 }
 
-fn parse(input: &str) -> impl Iterator<Item = (usize, Dir)> + '_ {
+fn parse(input: &str) -> impl Iterator<Item = (usize, i8)> + '_ {
     input
         .trim()
         .chars()
         .map(|c| match c {
-            '<' => Dir::Left,
-            '>' => Dir::Right,
+            '<' => -1,
+            '>' => 1,
             _ => panic!(),
         })
         .enumerate()
         .cycle()
 }
 
-struct Loop {
-    starts: usize,
-    length: usize,
-    gains_height: usize,
-}
+fn compute(input: &str, mut count: usize) -> usize {
+    let mut dirs = parse(input);
+    let mut shapes = spawn_shapes();
+    let mut board = Board::new();
 
-fn find_loop(input: &str) -> Loop {
+    let mut looped_height = 0;
+
     #[derive(PartialEq, Eq, PartialOrd, Ord)]
     struct Key {
         dir_index: usize,
         shape_index: usize,
         ceiling: [u8; 4],
     }
-    let mut dirs = parse(input);
-    let mut shapes = Shape::spawn();
-    let mut board = Board::new();
     let mut cache = BTreeMap::<Key, (usize, usize)>::new();
-    for iteration in 0.. {
+
+    for iteration in 0..count {
         let (shape_index, dir_index) = board.play_single_iteration(&mut dirs, &mut shapes);
-        if let Some(ceiling) = board.impassable_ceiling() {
-            let key = Key {
-                dir_index,
-                shape_index,
-                ceiling,
-            };
-            if let Some(&(prev_iteration, prev_height)) = cache.get(&key) {
-                return Loop {
-                    starts: prev_iteration,
-                    length: iteration - prev_iteration,
-                    gains_height: board.height() - prev_height,
-                };
-            }
-            cache.insert(key, (iteration, board.height()));
+        count -= 1;
+        let ceiling = match board.impassable_ceiling() {
+            None => continue,
+            Some(ceiling) => ceiling,
+        };
+        let key = Key {
+            shape_index,
+            dir_index,
+            ceiling,
+        };
+        if let Some(&(prev_iteration, prev_height)) = cache.get(&key) {
+            let cycle_length = iteration - prev_iteration;
+            let gained_height = board.height() - prev_height;
+            looped_height = (count / cycle_length) * gained_height;
+            count %= cycle_length;
+            break;
         }
+        cache.insert(key, (iteration, board.height()));
     }
-    panic!()
-}
 
-fn compute(input: &str, mut count: usize) -> usize {
-    let l = find_loop(input);
-
-    let mut dirs = parse(input);
-    let mut shapes = Shape::spawn();
-    let mut board = Board::new();
-
-    for _ in 0..l.starts {
-        board.play_single_iteration(&mut dirs, &mut shapes);
-    }
-    count -= l.starts;
-    let looped_height = (count / l.length) * l.gains_height;
-    count %= l.length;
     for _ in 0..count {
         board.play_single_iteration(&mut dirs, &mut shapes);
     }
+
     board.height() + looped_height
 }
 
@@ -296,15 +240,7 @@ mod tests {
         let dirs = parse("<><>>").take(7).collect_vec();
         assert_eq!(
             dirs,
-            vec![
-                (0, Dir::Left),
-                (1, Dir::Right),
-                (2, Dir::Left),
-                (3, Dir::Right),
-                (4, Dir::Right),
-                (0, Dir::Left),
-                (1, Dir::Right)
-            ]
+            vec![(0, -1), (1, 1), (2, -1), (3, 1), (4, 1), (0, -1), (1, 1)]
         );
     }
 
@@ -349,7 +285,7 @@ mod tests {
         let shape = Shape::new(&[&[1]]);
         let tall_shape = Shape::new(&[&[1], &[1]]);
         let mut shape2 = shape.clone();
-        shape2.shift(Dir::Left);
+        shape2.shift(-1);
 
         let mut board = Board::new();
 
@@ -394,13 +330,5 @@ mod tests {
     #[test]
     fn test_solve_2() {
         assert_eq!(compute(EXAMPLE, 1000000000000), 1514285714288);
-    }
-
-    #[test]
-    fn test_loop() {
-        let l = find_loop(EXAMPLE);
-        assert_eq!(l.starts, 42);
-        assert_eq!(l.length, 35);
-        assert_eq!(l.gains_height, 53);
     }
 }
