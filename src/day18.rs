@@ -1,8 +1,8 @@
-use std::collections::{BTreeSet, BinaryHeap};
+use std::collections::{BTreeSet, HashSet};
 
 use itertools::Itertools;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Cube {
     x: i8,
     y: i8,
@@ -48,7 +48,7 @@ impl BBox {
         self.max.z = self.max.z.max(cube.z + 1);
     }
 
-    fn is_nearby(&self, cube: Cube) -> bool {
+    fn loosely_contains(&self, cube: Cube) -> bool {
         cube.x >= self.min.x - 1
             && cube.y >= self.min.y - 1
             && cube.z >= self.min.z - 1
@@ -95,14 +95,14 @@ impl Droplet {
             None => return 0,
             Some(bbox) => bbox,
         };
-        let mut queue: BinaryHeap<_> = [bbox.max].into_iter().collect();
-        let mut seen: BTreeSet<_> = [bbox.max].into_iter().collect();
+        let mut queue: Vec<_> = [bbox.max].into_iter().collect();
+        let mut seen: HashSet<_> = [bbox.max].into_iter().collect();
         let mut result = 0;
-        while let Some(cube) = queue.pop() {
-            for cube in cube.adjacent_cubes() {
+        while let Some(parent) = queue.pop() {
+            for cube in parent.adjacent_cubes() {
                 if self.cubes.contains(&cube) {
                     result += 1;
-                } else if bbox.is_nearby(cube) && seen.insert(cube) {
+                } else if bbox.loosely_contains(cube) && seen.insert(cube) {
                     queue.push(cube);
                 }
             }
