@@ -67,12 +67,14 @@ macro_rules! make_runner {
         $($mods)*
 
         fn run(args: Args) {
+            let start = std::time::Instant::now();
             let (day, result) = match args.task {
                 $lhs => $rhs,
                 Task::Latest => $rhs,
                 $($rest_lhs => $rest_rhs,)*
             };
-            println!("Result for day {} is: {}", day, result);
+            let duration = start.elapsed().as_secs_f32();
+            println!("Computed result for day {day} in {duration:.3} seconds: {result}");
         }
     );
 

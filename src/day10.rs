@@ -65,7 +65,7 @@ pub(crate) fn solve_2(input: &str) -> String {
                 .chain(if (i as isize % 40 - x).abs() <= 1 {
                     once("#")
                 } else {
-                    once(".")
+                    once(" ")
                 })
         })
         .collect()

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::Peekable};
+use std::iter::Peekable;
 
 use itertools::Itertools;
 
