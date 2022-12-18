@@ -91,9 +91,8 @@ impl Droplet {
     }
 
     fn exterior_surface_area(&self) -> usize {
-        let bbox = match &self.bbox {
-            None => return 0,
-            Some(bbox) => bbox,
+        let Some(bbox) = &self.bbox else {
+            return 0;
         };
         let mut queue: Vec<_> = [bbox.max].into_iter().collect();
         let mut seen: HashSet<_> = [bbox.max].into_iter().collect();
