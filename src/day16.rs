@@ -1,224 +1,239 @@
-use std::{
-    collections::{BTreeMap, BTreeSet, BinaryHeap},
-    iter::once,
-};
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use itertools::Itertools;
 use regex::Regex;
 
-#[derive(Clone, Copy)]
-struct BitSet {
-    field: u64,
+struct Edge {
+    cost: u8,
+    to_node: u8,
 }
 
-impl BitSet {
-    fn new() -> Self {
-        Self { field: 0 }
-    }
-
-    fn insert(&mut self, index: u8) -> bool {
-        let already_present = self.contains(index);
-        self.field |= 1 << index as u64;
-        !already_present
-    }
-
-    fn contains(&self, index: u8) -> bool {
-        (self.field & (1 << index as u64)) != 0
-    }
-}
-
-struct State<const N: usize> {
-    score: isize,
-    actor_states: [(u8, u8); N],
-    visited_valves: BitSet,
-    remaining_rate: isize,
-}
-
-impl<const N: usize> PartialEq for State<N> {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
-
-impl<const N: usize> Eq for State<N> {}
-
-impl<const N: usize> PartialOrd for State<N> {
-    fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {
-        Some(std::cmp::Ordering::Equal)
-    }
-}
-
-impl<const N: usize> Ord for State<N> {
-    fn cmp(&self, _other: &Self) -> std::cmp::Ordering {
-        std::cmp::Ordering::Equal
-    }
+struct Node {
+    rate: u8,
+    edges: Vec<Edge>,
 }
 
 struct Graph {
-    valves: Vec<Valve>,
-    connection_costs: Vec<Vec<(u8, u8)>>,
-    start_index: u8,
+    nodes: Vec<Node>,
+    initial_node: u8,
 }
 
 impl Graph {
-    fn new(valves: &[Valve]) -> Self {
-        let valves = valves
-            .iter()
-            .cloned()
-            .sorted_by_key(|v| v.rate == 0)
-            .collect_vec();
-        let index_name_map: BTreeMap<_, _> = valves
-            .iter()
-            .map(|v| &v.name)
-            .enumerate()
-            .map(|(i, n)| (n.clone(), i))
-            .collect();
-        let connection_costs = valves
-            .iter()
-            .map(|v| Graph::bfs(&v.name, &valves, &index_name_map))
-            .collect();
-        Self {
-            valves,
-            connection_costs,
-            start_index: index_name_map[&String::from("AA")] as u8,
+    fn new<'a>(valves: impl Iterator<Item = Valve<'a>>) -> Self {
+        let mut nodes = Vec::new();
+        let mut name_id_map = HashMap::new();
+        let mut named_valves = HashMap::new();
+        for valve in valves {
+            if valve.rate > 0 || valve.name == "AA" {
+                name_id_map.insert(valve.name, nodes.len());
+                nodes.push(Node {
+                    rate: valve.rate,
+                    edges: Vec::new(),
+                })
+            }
+            named_valves.insert(valve.name, valve);
         }
-    }
-
-    fn bfs(
-        start: &String,
-        valves: &[Valve],
-        index_name_map: &BTreeMap<String, usize>,
-    ) -> Vec<(u8, u8)> {
-        let mut seen = BTreeSet::new();
-        let mut stack = vec![(start, 0)];
-        let mut result = Vec::new();
-        while !stack.is_empty() {
-            let (name, cost) = stack.remove(0);
-            let index = index_name_map[name];
-            if !seen.insert(index) {
-                continue;
-            }
-            if valves[index].rate != 0 {
-                result.push((index as u8, cost));
-            }
-            stack.extend(valves[index].connections.iter().map(|c| (c, cost + 1)));
-        }
-        result
-    }
-
-    fn connections<'b, const N: usize>(
-        &'b self,
-        state: &'b State<N>,
-        actor_index: usize,
-    ) -> impl Iterator<Item = (u8, u8)> + 'b {
-        let (current_valve, remaining_steps) = state.actor_states[actor_index];
-        self.connection_costs[current_valve as usize]
-            .iter()
-            .copied()
-            .filter(move |(_, distance)| distance + 1 < remaining_steps)
-            .filter(|(i, _)| !state.visited_valves.contains(*i))
-            .map(move |(i, cost)| (i, remaining_steps - cost - 1))
-            .chain(once((current_valve, 0)))
-    }
-
-    fn heuristic<const N: usize>(&self, state: &State<N>) -> isize {
-        // The actor with the most remaining time visits everything instantly.
-        let remaining_steps = state
-            .actor_states
-            .iter()
-            .map(|(_, remaining_steps)| remaining_steps)
-            .max()
-            .unwrap();
-        *remaining_steps as isize * state.remaining_rate
-    }
-
-    fn next_actor_states<const N: usize>(&self, state: &State<N>) -> Vec<[(u8, u8); N]> {
-        let new_states = (0..N)
-            .map(|actor_index| self.connections(state, actor_index).collect_vec())
-            .collect_vec();
-        let mut stack = vec![(0, state.actor_states.clone())];
-        let mut next_actor_states = Vec::new();
-        while let Some((actor_index, mut actor_states)) = stack.pop() {
-            if actor_index == N {
-                next_actor_states.push(actor_states);
-                continue;
-            }
-            for new_state in &new_states[actor_index] {
-                if actor_states[..actor_index]
-                    .iter()
-                    .any(|&(i, _)| i == new_state.0)
-                {
+        for (&root_name, &root_id) in &name_id_map {
+            let mut queue = VecDeque::from([(0, root_name)]);
+            let mut seen = HashSet::new();
+            while let Some((distance, name)) = queue.pop_front() {
+                if !seen.insert(name) {
                     continue;
                 }
-                actor_states[actor_index] = *new_state;
-                stack.push((actor_index + 1, actor_states));
-            }
-        }
-        next_actor_states
-    }
-
-    fn a_star<const N: usize>(&self, initial_time: u8) -> isize {
-        let mut heap: BinaryHeap<_> = [(
-            0,
-            State {
-                actor_states: [(self.start_index, initial_time); N],
-                score: 0,
-                visited_valves: BitSet::new(),
-                remaining_rate: self.valves.iter().map(|v| v.rate).sum(),
-            },
-        )]
-        .into_iter()
-        .collect();
-
-        while let Some((_, state)) = heap.pop() {
-            if state
-                .actor_states
-                .iter()
-                .all(|(_, remaining_steps)| *remaining_steps == 0)
-            {
-                return state.score;
-            }
-            // Try to go to each of the neighbours...
-            for actor_states in self.next_actor_states(&state) {
-                let mut visited_valves = state.visited_valves.clone();
-                let mut score = state.score;
-                let mut remaining_rate = state.remaining_rate;
-                for &(i, remaining_steps) in actor_states.iter() {
-                    if visited_valves.insert(i) {
-                        score += remaining_steps as isize * self.valves[i as usize].rate;
-                        remaining_rate -= self.valves[i as usize].rate;
-                    }
+                for &child in &named_valves[name].connections {
+                    queue.push_back((distance + 1, child));
                 }
-                let child = State {
-                    visited_valves,
-                    actor_states,
-                    score,
-                    remaining_rate,
+                let Some(&id) = name_id_map.get(name) else {
+                    continue;
                 };
-                let heuristic = self.heuristic(&child);
-                heap.push((heuristic + child.score, child));
+                if id != root_id {
+                    nodes[root_id].edges.push(Edge {
+                        cost: distance + 1,
+                        to_node: id as u8,
+                    })
+                }
             }
         }
-        panic!()
+        Self {
+            nodes,
+            initial_node: name_id_map["AA"] as u8,
+        }
+    }
+
+    fn solve<const NUM_ACTORS: usize>(&self, budget: usize) -> usize {
+        struct State {
+            current_score: usize,
+            remaining_budget: i8,
+            current_node: u8,
+            allowed_nodes: u32,
+        }
+
+        fn dp_solve(
+            graph: &Graph,
+            mut state: State,
+            memo: &mut Vec<Vec<Vec<Option<usize>>>>,
+        ) -> usize {
+            if state.remaining_budget <= 1 {
+                return state.current_score;
+            }
+            if state.allowed_nodes & (1 << state.current_node) == 0 {
+                return state.current_score;
+            }
+            if let &Some(result) = &memo[state.allowed_nodes as usize][state.current_node as usize]
+                [state.remaining_budget as usize]
+            {
+                return result;
+            }
+
+            state.allowed_nodes &= !(1 << state.current_node);
+            let rate = graph.nodes[state.current_node as usize].rate;
+            state.current_score += state.remaining_budget as usize * rate as usize;
+            let mut best_score = state.current_score;
+            let current_node = state.current_node as usize;
+            for &Edge { to_node, cost } in &graph.nodes[current_node].edges {
+                let state = State {
+                    current_node: to_node,
+                    remaining_budget: state.remaining_budget - cost as i8,
+                    ..state
+                };
+                best_score = dp_solve(graph, state, memo).max(best_score);
+            }
+
+            memo[state.allowed_nodes as usize][state.current_node as usize]
+                [state.remaining_budget as usize] = Some(best_score);
+            best_score
+        }
+
+        let num_nodes = self.nodes.len();
+        let mut memo = vec![vec![vec![None; budget + 1]; num_nodes]; 2usize.pow(num_nodes as u32)];
+
+        let initial_state = State {
+            current_score: 0,
+            current_node: self.initial_node,
+            remaining_budget: budget as i8,
+            allowed_nodes: 0,
+        };
+        let mut best_score = 0;
+        let mut stack = vec![(0, [1 << self.initial_node; NUM_ACTORS])];
+        while let Some((node, allowed_nodes)) = stack.pop() {
+            if node == num_nodes {
+                let mut score = 0;
+                for nodes in allowed_nodes {
+                    let state = State {
+                        allowed_nodes: nodes,
+                        ..initial_state
+                    };
+                    score += dp_solve(self, state, &mut memo);
+                }
+                best_score = best_score.max(score);
+                continue;
+            }
+            for actor in 0..NUM_ACTORS {
+                let mut allowed_nodes = allowed_nodes.clone();
+                allowed_nodes[actor] |= 1 << node;
+                stack.push((node + 1, allowed_nodes));
+            }
+        }
+        best_score
     }
 }
 
-#[derive(Clone)]
-struct Valve {
-    name: String,
-    rate: isize,
-    connections: Vec<String>,
+#[derive(PartialEq, Eq, Hash)]
+struct SolveState {
+    node: u8,
+    allowed: u32,
+    budget: i8,
 }
 
-impl Valve {
-    fn new(input: &str) -> Self {
+struct Solver<'a> {
+    graph: &'a Graph,
+    memo: HashMap<SolveState, usize>,
+}
+
+impl<'a> Solver<'a> {
+    fn new(graph: &'a Graph) -> Self {
+        Self {
+            memo: HashMap::new(),
+            graph,
+        }
+    }
+
+    fn solve(&mut self, num_actors: usize, budget: i8) -> usize {
+        let initial_node = self.graph.initial_node;
+        let initial_state = SolveState {
+            node: initial_node,
+            allowed: 1 << initial_node,
+            budget,
+        };
+
+        let num_nodes = self.graph.nodes.len();
+        let mut best_score = 0;
+        let mut stack = vec![(0, vec![0; num_actors])];
+        while let Some((node, actor_nodes)) = stack.pop() {
+            if node == num_nodes {
+                let mut score = 0;
+                for nodes in actor_nodes {
+                    let state = SolveState {
+                        allowed: initial_state.allowed | nodes,
+                        ..initial_state
+                    };
+                    score += self.recurse(state, 0);
+                }
+                best_score = best_score.max(score);
+                continue;
+            }
+            for actor in 0..num_actors {
+                let mut allowed_nodes = actor_nodes.clone();
+                allowed_nodes[actor] |= 1 << node;
+                stack.push((node + 1, allowed_nodes));
+            }
+        }
+        best_score
+    }
+
+    fn recurse(&mut self, mut state: SolveState, mut score: usize) -> usize {
+        if state.budget <= 1 {
+            return score;
+        }
+        if state.allowed & (1 << state.node) == 0 {
+            return score;
+        }
+        if let Some(&result) = self.memo.get(&state) {
+            return result;
+        }
+
+        state.allowed &= !(1 << state.node);
+        let rate = self.graph.nodes[state.node as usize].rate;
+        score += state.budget as usize * rate as usize;
+        let mut best_score = score;
+        for &Edge { to_node, cost } in &self.graph.nodes[state.node as usize].edges {
+            let state = SolveState {
+                node: to_node,
+                budget: state.budget - cost as i8,
+                ..state
+            };
+            best_score = self.recurse(state, score).max(best_score);
+        }
+
+        self.memo.insert(state, best_score);
+        best_score
+    }
+}
+
+struct Valve<'a> {
+    name: &'a str,
+    rate: u8,
+    connections: Vec<&'a str>,
+}
+
+impl<'a> Valve<'a> {
+    fn new(input: &'a str) -> Self {
         let re = Regex::new(r"^Valve (\w+) has flow rate=(\d+); tunnels? leads? to valves? (.*)$")
             .unwrap();
         let cap = re.captures(input).unwrap();
         Self {
-            name: cap[1].into(),
-            rate: cap[2].parse::<isize>().unwrap(),
-            connections: cap[3].split(", ").map(|s| s.to_string()).collect(),
+            name: cap.get(1).unwrap().into(),
+            rate: cap.get(2).unwrap().as_str().parse().unwrap(),
+            connections: cap.get(3).unwrap().as_str().split(", ").collect(),
         }
     }
 }
@@ -232,15 +247,13 @@ fn parse(input: &str) -> impl Iterator<Item = Valve> + '_ {
 }
 
 pub(crate) fn solve(input: &str) -> usize {
-    let valves = parse(input).collect_vec();
-    let graph = Graph::new(&valves);
-    graph.a_star::<1>(30) as usize
+    Graph::new(parse(input)).solve::<1>(30)
 }
 
 pub(crate) fn solve_2(input: &str) -> usize {
-    let valves = parse(input).collect_vec();
-    let graph = Graph::new(&valves);
-    graph.a_star::<2>(26) as usize
+    let graph = Graph::new(parse(input));
+    let mut solver = Solver::new(&graph);
+    solver.solve(2, 26)
 }
 
 #[cfg(test)]
