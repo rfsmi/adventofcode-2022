@@ -58,82 +58,50 @@ impl Graph {
             initial_node: name_id_map["AA"] as u8,
         }
     }
+}
 
-    fn solve<const NUM_ACTORS: usize>(&self, budget: usize) -> usize {
-        struct State {
-            current_score: usize,
-            remaining_budget: i8,
-            current_node: u8,
-            allowed_nodes: u32,
+trait BuildableMemo<Value> {
+    fn new(graph: &Graph, budget: i8) -> Self;
+}
+trait Memo<Value: Clone> {
+    fn get(&self, key: &SolveState) -> Option<Value>;
+    fn insert(&mut self, key: SolveState, value: Value);
+}
+
+impl<Value> BuildableMemo<Value> for HashMap<SolveState, Value> {
+    fn new(_graph: &Graph, _budget: i8) -> Self {
+        Self::new()
+    }
+}
+
+impl<Value: Clone> Memo<Value> for HashMap<SolveState, Value> {
+    fn get(&self, key: &SolveState) -> Option<Value> {
+        HashMap::get(self, key).cloned()
+    }
+    fn insert(&mut self, key: SolveState, value: Value) {
+        HashMap::insert(self, key, value);
+    }
+}
+
+struct VecCache<T> {
+    data: Vec<Vec<Vec<Option<T>>>>,
+}
+
+impl<Value: Clone> BuildableMemo<Value> for VecCache<Value> {
+    fn new(graph: &Graph, budget: i8) -> Self {
+        let n = graph.nodes.len();
+        Self {
+            data: vec![vec![vec![None; 1 + budget as usize]; n]; 2usize.pow(n as u32)],
         }
+    }
+}
 
-        fn dp_solve(
-            graph: &Graph,
-            mut state: State,
-            memo: &mut Vec<Vec<Vec<Option<usize>>>>,
-        ) -> usize {
-            if state.remaining_budget <= 1 {
-                return state.current_score;
-            }
-            if state.allowed_nodes & (1 << state.current_node) == 0 {
-                return state.current_score;
-            }
-            if let &Some(result) = &memo[state.allowed_nodes as usize][state.current_node as usize]
-                [state.remaining_budget as usize]
-            {
-                return result;
-            }
-
-            state.allowed_nodes &= !(1 << state.current_node);
-            let rate = graph.nodes[state.current_node as usize].rate;
-            state.current_score += state.remaining_budget as usize * rate as usize;
-            let mut best_score = state.current_score;
-            let current_node = state.current_node as usize;
-            for &Edge { to_node, cost } in &graph.nodes[current_node].edges {
-                let state = State {
-                    current_node: to_node,
-                    remaining_budget: state.remaining_budget - cost as i8,
-                    ..state
-                };
-                best_score = dp_solve(graph, state, memo).max(best_score);
-            }
-
-            memo[state.allowed_nodes as usize][state.current_node as usize]
-                [state.remaining_budget as usize] = Some(best_score);
-            best_score
-        }
-
-        let num_nodes = self.nodes.len();
-        let mut memo = vec![vec![vec![None; budget + 1]; num_nodes]; 2usize.pow(num_nodes as u32)];
-
-        let initial_state = State {
-            current_score: 0,
-            current_node: self.initial_node,
-            remaining_budget: budget as i8,
-            allowed_nodes: 0,
-        };
-        let mut best_score = 0;
-        let mut stack = vec![(0, [1 << self.initial_node; NUM_ACTORS])];
-        while let Some((node, allowed_nodes)) = stack.pop() {
-            if node == num_nodes {
-                let mut score = 0;
-                for nodes in allowed_nodes {
-                    let state = State {
-                        allowed_nodes: nodes,
-                        ..initial_state
-                    };
-                    score += dp_solve(self, state, &mut memo);
-                }
-                best_score = best_score.max(score);
-                continue;
-            }
-            for actor in 0..NUM_ACTORS {
-                let mut allowed_nodes = allowed_nodes.clone();
-                allowed_nodes[actor] |= 1 << node;
-                stack.push((node + 1, allowed_nodes));
-            }
-        }
-        best_score
+impl<Value: Clone> Memo<Value> for VecCache<Value> {
+    fn get(&self, key: &SolveState) -> Option<Value> {
+        self.data[key.allowed as usize][key.node as usize][key.budget as usize].clone()
+    }
+    fn insert(&mut self, key: SolveState, value: Value) {
+        self.data[key.allowed as usize][key.node as usize][key.budget as usize] = Some(value)
     }
 }
 
@@ -146,18 +114,20 @@ struct SolveState {
 
 struct Solver<'a> {
     graph: &'a Graph,
-    memo: HashMap<SolveState, usize>,
+    memo: Option<Box<dyn Memo<usize>>>,
 }
 
 impl<'a> Solver<'a> {
     fn new(graph: &'a Graph) -> Self {
-        Self {
-            memo: HashMap::new(),
-            graph,
-        }
+        Self { memo: None, graph }
     }
 
-    fn solve(&mut self, num_actors: usize, budget: i8) -> usize {
+    fn solve<T: BuildableMemo<usize> + Memo<usize> + 'static>(
+        &mut self,
+        num_actors: usize,
+        budget: i8,
+    ) -> usize {
+        self.memo.replace(Box::new(T::new(self.graph, budget)));
         let initial_node = self.graph.initial_node;
         let initial_state = SolveState {
             node: initial_node,
@@ -197,7 +167,7 @@ impl<'a> Solver<'a> {
         if state.allowed & (1 << state.node) == 0 {
             return score;
         }
-        if let Some(&result) = self.memo.get(&state) {
+        if let Some(result) = self.memo.as_ref().unwrap().get(&state) {
             return result;
         }
 
@@ -214,7 +184,7 @@ impl<'a> Solver<'a> {
             best_score = self.recurse(state, score).max(best_score);
         }
 
-        self.memo.insert(state, best_score);
+        self.memo.as_mut().unwrap().insert(state, best_score);
         best_score
     }
 }
@@ -247,13 +217,15 @@ fn parse(input: &str) -> impl Iterator<Item = Valve> + '_ {
 }
 
 pub(crate) fn solve(input: &str) -> usize {
-    Graph::new(parse(input)).solve::<1>(30)
+    let graph = Graph::new(parse(input));
+    let mut solver = Solver::new(&graph);
+    solver.solve::<HashMap<SolveState, usize>>(1, 30)
 }
 
 pub(crate) fn solve_2(input: &str) -> usize {
     let graph = Graph::new(parse(input));
     let mut solver = Solver::new(&graph);
-    solver.solve(2, 26)
+    solver.solve::<VecCache<usize>>(2, 26)
 }
 
 #[cfg(test)]
@@ -287,7 +259,18 @@ mod tests {
     }
 
     #[test]
-    fn test_solve_2() {
-        assert_eq!(solve_2(EXAMPLE), 1707);
+    fn test_solve_2_vec() {
+        let graph = Graph::new(parse(EXAMPLE));
+        let mut solver = Solver::new(&graph);
+        let result = solver.solve::<VecCache<usize>>(2, 26);
+        assert_eq!(result, 1707)
+    }
+
+    #[test]
+    fn test_solve_2_hashmap() {
+        let graph = Graph::new(parse(EXAMPLE));
+        let mut solver = Solver::new(&graph);
+        let result = solver.solve::<HashMap<SolveState, usize>>(2, 26);
+        assert_eq!(result, 1707)
     }
 }

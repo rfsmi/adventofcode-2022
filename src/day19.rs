@@ -5,7 +5,7 @@ use regex::Regex;
 
 struct Robot {
     costs: [u8; 3],
-    produces: usize,
+    _produces: usize,
 }
 
 struct Blueprint {
@@ -29,19 +29,19 @@ fn parse(input: &str) -> impl Iterator<Item = Blueprint> + '_ {
                 robots: [
                     Robot {
                         costs: [ore_ore, 0, 0],
-                        produces: 0,
+                        _produces: 0,
                     },
                     Robot {
                         costs: [clay_ore, 0, 0],
-                        produces: 1,
+                        _produces: 1,
                     },
                     Robot {
                         costs: [obs_ore, obs_clay, 0],
-                        produces: 2,
+                        _produces: 2,
                     },
                     Robot {
                         costs: [geo_ore, 0, geo_obs],
-                        produces: 3,
+                        _produces: 3,
                     },
                 ],
                 caps: [
@@ -131,10 +131,10 @@ mod tests {
         assert_eq!(blueprint.robots[1].costs, [2, 0, 0]);
         assert_eq!(blueprint.robots[2].costs, [3, 14, 0]);
         assert_eq!(blueprint.robots[3].costs, [2, 0, 7]);
-        assert_eq!(blueprint.robots[0].produces, 0);
-        assert_eq!(blueprint.robots[1].produces, 1);
-        assert_eq!(blueprint.robots[2].produces, 2);
-        assert_eq!(blueprint.robots[3].produces, 3);
+        assert_eq!(blueprint.robots[0]._produces, 0);
+        assert_eq!(blueprint.robots[1]._produces, 1);
+        assert_eq!(blueprint.robots[2]._produces, 2);
+        assert_eq!(blueprint.robots[3]._produces, 3);
     }
 
     #[test]
