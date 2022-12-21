@@ -29,6 +29,7 @@ utils::make_runner!(
     17+,
     18+,
     19+,
+    20+,
 );
 
 fn main() {
