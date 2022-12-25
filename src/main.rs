@@ -34,6 +34,7 @@ utils::make_runner!(
     22,
     23+,
     24+,
+    25,
 );
 
 fn main() {
