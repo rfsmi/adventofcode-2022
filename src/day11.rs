@@ -184,7 +184,7 @@ mod tests {
         assert_eq!(monkey.compute(), vec![(3, 500), (3, 620)]);
     }
 
-    const example: &str = "
+    const EXAMPLE: &str = "
         Monkey 0:
         Starting items: 79, 98
         Operation: new = old * 19
@@ -216,11 +216,11 @@ mod tests {
 
     #[test]
     fn test_solve() {
-        assert_eq!(solve(example), 10605);
+        assert_eq!(solve(EXAMPLE), 10605);
     }
 
     #[test]
     fn test_solve_2() {
-        assert_eq!(solve_2(example), 2713310158);
+        assert_eq!(solve_2(EXAMPLE), 2713310158);
     }
 }

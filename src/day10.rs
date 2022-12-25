@@ -70,11 +70,3 @@ pub(crate) fn solve_2(input: &str) -> String {
         })
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test() {}
-}

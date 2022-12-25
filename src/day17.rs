@@ -317,7 +317,7 @@ mod tests {
             ......@
         */
 
-        let mut shape = Shape::new(&[&[0, 1, 0], &[1, 1, 1], &[0, 1, 0]]);
+        let shape = Shape::new(&[&[0, 1, 0], &[1, 1, 1], &[0, 1, 0]]);
         assert_eq!(shape.first_col, 2);
         assert_eq!(shape.last_col, 4);
     }
