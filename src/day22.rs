@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, iter::zip};
 
 use itertools::Itertools;
 
@@ -8,39 +8,106 @@ enum Cell {
     Open,
 }
 
+#[derive(Copy, Clone)]
+enum Line {
+    Top(isize, isize),
+    Left(isize, isize),
+    Bottom(isize, isize),
+    Right(isize, isize),
+}
+
+impl Line {
+    fn src_facing(&self) -> Facing {
+        match self {
+            Line::Top(_, _) => Facing::Up,
+            Line::Bottom(_, _) => Facing::Down,
+            Line::Left(_, _) => Facing::Left,
+            Line::Right(_, _) => Facing::Right,
+        }
+    }
+
+    fn dst_facing(&self) -> Facing {
+        match self {
+            Line::Top(_, _) => Facing::Down,
+            Line::Bottom(_, _) => Facing::Up,
+            Line::Left(_, _) => Facing::Right,
+            Line::Right(_, _) => Facing::Left,
+        }
+    }
+
+    fn to_coords(self, scale: isize) -> impl Iterator<Item = (isize, isize)> {
+        let (x_range, y_range) = match self {
+            Line::Top(x, y) => (x * scale..(1 + x) * scale, y * scale..1 + y * scale),
+            Line::Bottom(x, y) => (x * scale..(1 + x) * scale, y * scale - 1..y * scale),
+            Line::Left(x, y) => (x * scale..1 + x * scale, y * scale..(1 + y) * scale),
+            Line::Right(x, y) => (x * scale - 1..x * scale, y * scale..(1 + y) * scale),
+        };
+        [x_range.into_iter(), y_range.into_iter()]
+            .into_iter()
+            .multi_cartesian_product()
+            .map(|v| (v[0], v[1]))
+    }
+}
+
 struct Board {
     cells: HashMap<(isize, isize), Cell>,
-    col_lens: HashMap<isize, isize>,
-    row_lens: HashMap<isize, isize>,
+    discontinuities: HashMap<Player, Player>,
     initial_player: Player,
 }
 
 impl Board {
     fn new(rows: Vec<Vec<Option<Cell>>>) -> Self {
-        let mut col_lens = HashMap::new();
-        let mut row_lens = HashMap::new();
         let mut cells = HashMap::new();
         let mut initial_pos = (isize::MAX, isize::MAX);
         for (y, row) in rows.iter().enumerate() {
             for (x, maybe_cell) in row.iter().enumerate() {
                 if let &Some(cell) = maybe_cell {
                     cells.insert((x as isize, y as isize), cell);
-                    *col_lens.entry(x as isize).or_default() += 1;
-                    *row_lens.entry(y as isize).or_default() += 1;
                     initial_pos = initial_pos.min((y as isize, x as isize));
                 };
             }
         }
         Self {
             cells,
-            col_lens,
-            row_lens,
+            discontinuities: HashMap::new(),
             initial_player: Player {
                 x: initial_pos.1,
                 y: initial_pos.0,
                 facing: Facing::Right,
             },
         }
+    }
+
+    fn add_discontinuity(&mut self, scale: isize, a: Line, b: Line) {
+        let mut add_directional_discontinuity = |from: Line, to: Line| {
+            let src_facing = from.src_facing();
+            let dst_facing = to.dst_facing();
+            let mut dst_players = to
+                .to_coords(scale)
+                .map(|(x, y)| Player {
+                    x,
+                    y,
+                    facing: dst_facing,
+                })
+                .collect_vec();
+            match (src_facing, dst_facing) {
+                (Facing::Up, Facing::Up | Facing::Right) => (),
+                (Facing::Right, Facing::Right | Facing::Up) => (),
+                (Facing::Left, Facing::Left | Facing::Down) => (),
+                (Facing::Down, Facing::Down | Facing::Left) => (),
+                _ => dst_players.reverse(),
+            }
+            self.discontinuities.extend(zip(
+                from.to_coords(scale).map(|(x, y)| Player {
+                    x,
+                    y,
+                    facing: src_facing,
+                }),
+                dst_players.into_iter(),
+            ));
+        };
+        add_directional_discontinuity(a, b);
+        add_directional_discontinuity(b, a);
     }
 
     fn walk(&self, player: Player) -> impl Iterator<Item = Player> + '_ {
@@ -51,7 +118,7 @@ impl Board {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Facing {
     Up,
     Down,
@@ -71,34 +138,37 @@ impl<'a> Iterator for PlayerWalker<'a> {
         let Some(player) = self.player.take() else {
             return None;
         };
-        let x = player.x;
-        let y = player.y;
-        let (mut new_x, mut new_y) = match player.facing {
-            Facing::Right => (x + 1, y),
-            Facing::Left => (x - 1, y),
-            Facing::Up => (x, y - 1),
-            Facing::Down => (x, y + 1),
-        };
-        if !self.board.cells.contains_key(&(new_x, new_y)) {
-            match player.facing {
-                Facing::Right => new_x -= self.board.row_lens[&y],
-                Facing::Left => new_x += self.board.row_lens[&y],
-                Facing::Down => new_y -= self.board.col_lens[&x],
-                Facing::Up => new_y += self.board.col_lens[&x],
+        let new_player = match self.board.discontinuities.get(&player) {
+            Some(&new_player) => new_player,
+            None => {
+                let x = player.x;
+                let y = player.y;
+                let (new_x, new_y) = match player.facing {
+                    Facing::Right => (x + 1, y),
+                    Facing::Left => (x - 1, y),
+                    Facing::Up => (x, y - 1),
+                    Facing::Down => (x, y + 1),
+                };
+                Player {
+                    x: new_x,
+                    y: new_y,
+                    facing: player.facing,
+                }
             }
-        }
-        if let Cell::Open = self.board.cells.get(&(new_x, new_y)).unwrap() {
-            self.player = Some(Player {
-                x: new_x,
-                y: new_y,
-                facing: player.facing,
-            });
+        };
+        if let Cell::Open = self
+            .board
+            .cells
+            .get(&(new_player.x, new_player.y))
+            .expect(&format!("OOB (x: {}, y: {})", new_player.x, new_player.y))
+        {
+            self.player = Some(new_player);
         }
         Some(player)
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct Player {
     x: isize,
     y: isize,
@@ -176,8 +246,7 @@ fn parse(input: &str) -> (Board, Vec<Instruction>) {
     (board, instructions)
 }
 
-pub(crate) fn solve(input: &str) -> isize {
-    let (board, instructions) = parse(input);
+fn compute(board: Board, instructions: Vec<Instruction>) -> isize {
     let mut player = board.initial_player;
     for instruction in instructions {
         player = match instruction {
@@ -194,6 +263,62 @@ pub(crate) fn solve(input: &str) -> isize {
             Facing::Left => 2,
             Facing::Up => 3,
         }
+}
+
+pub(crate) fn solve(input: &str) -> isize {
+    let (mut board, instructions) = parse(input);
+    //       0  1  2  3
+    //           4  3
+    //    0     oooxxx
+    //         1oooxxx1
+    //          oooxxx
+    //    1     xxx 3
+    //         2xxx2
+    //        6 xxx
+    //    2  xxxooo
+    //      5xxxooo5
+    //       xxxooo
+    //    3  ooo 4
+    //      7ooo7
+    //       ooo
+    //    4   6
+
+    board.add_discontinuity(50, Line::Left(1, 0), Line::Right(3, 0)); // 1
+    board.add_discontinuity(50, Line::Left(1, 1), Line::Right(2, 1)); // 2
+    board.add_discontinuity(50, Line::Top(2, 0), Line::Bottom(2, 1)); // 3
+    board.add_discontinuity(50, Line::Top(1, 0), Line::Bottom(1, 3)); // 4
+    board.add_discontinuity(50, Line::Left(0, 2), Line::Right(2, 2)); // 5
+    board.add_discontinuity(50, Line::Top(0, 2), Line::Bottom(0, 4)); // 6
+    board.add_discontinuity(50, Line::Left(0, 3), Line::Right(1, 3)); // 7
+    compute(board, instructions)
+}
+
+pub(crate) fn solve_2(input: &str) -> isize {
+    let (mut board, instructions) = parse(input);
+    //       0  1  2  3
+    //           7  6
+    //    0     oooxxx
+    //         5o2ox1x4
+    //          oooxxx
+    //    1     xxx 1
+    //         2x3x1
+    //        2 xxx
+    //    2  xxxooo
+    //      5x5xo4o4
+    //       xxxooo
+    //    3  ooo 3
+    //      7o6o3
+    //       ooo
+    //    4   6
+
+    board.add_discontinuity(50, Line::Bottom(2, 1), Line::Right(2, 1)); // 1
+    board.add_discontinuity(50, Line::Left(1, 1), Line::Top(0, 2)); // 2
+    board.add_discontinuity(50, Line::Bottom(1, 3), Line::Right(1, 3)); // 3
+    board.add_discontinuity(50, Line::Right(3, 0), Line::Right(2, 2)); // 4
+    board.add_discontinuity(50, Line::Left(1, 0), Line::Left(0, 2)); // 5
+    board.add_discontinuity(50, Line::Top(2, 0), Line::Bottom(0, 4)); // 6
+    board.add_discontinuity(50, Line::Top(1, 0), Line::Left(0, 3)); // 7
+    compute(board, instructions)
 }
 
 #[cfg(test)]
@@ -219,7 +344,32 @@ mod tests {
     ";
 
     #[test]
-    fn test_solve() {
-        assert_eq!(solve(EXAMPLE), 6032);
+    fn test_line_bottom() {
+        let players = Line::Bottom(2, 2).to_coords(5).collect_vec();
+        assert_eq!(
+            players,
+            vec![(10, 9,), (11, 9,), (12, 9,), (13, 9,), (14, 9,),]
+        );
+    }
+
+    #[test]
+    fn test_line_top() {
+        let players = Line::Top(1, 0).to_coords(5).collect_vec();
+        assert_eq!(players, vec![(5, 0,), (6, 0,), (7, 0,), (8, 0,), (9, 0,),]);
+    }
+
+    #[test]
+    fn test_line_left() {
+        let players = Line::Left(1, 0).to_coords(5).collect_vec();
+        assert_eq!(players, vec![(5, 0,), (5, 1,), (5, 2,), (5, 3,), (5, 4,),]);
+    }
+
+    #[test]
+    fn test_line_right() {
+        let players = Line::Right(0, 1).to_coords(5).collect_vec();
+        assert_eq!(
+            players,
+            vec![(-1, 5,), (-1, 6,), (-1, 7,), (-1, 8,), (-1, 9,),]
+        );
     }
 }
