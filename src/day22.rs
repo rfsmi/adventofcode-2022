@@ -326,7 +326,7 @@ mod tests {
 
     use super::*;
 
-    const EXAMPLE: &str = "
+    const _EXAMPLE: &str = "
         ...#
         .#..
         #...

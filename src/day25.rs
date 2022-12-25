@@ -1,7 +1,7 @@
-fn to_base_5(mut base_10: i64) -> String {
+fn to_snafu(mut num: i64) -> String {
     let mut result = String::new();
-    while base_10 != 0 {
-        let digit = match (base_10 + 2) % 5 - 2 {
+    while num != 0 {
+        let digit = match (num + 2) % 5 - 2 {
             -2 => '=',
             -1 => '-',
             0 => '0',
@@ -10,14 +10,14 @@ fn to_base_5(mut base_10: i64) -> String {
             _ => panic!(),
         };
         result.insert(0, digit);
-        base_10 = (base_10 + 2) / 5;
+        num = (num + 2) / 5;
     }
     result
 }
 
-fn from_base_5(base_5: &str) -> i64 {
+fn from_snafu(snafu: &str) -> i64 {
     let mut result = 0;
-    for (place, c) in base_5.chars().rev().enumerate() {
+    for (place, c) in snafu.chars().rev().enumerate() {
         let digit = match c {
             '=' => -2,
             '-' => -1,
@@ -32,12 +32,12 @@ fn from_base_5(base_5: &str) -> i64 {
 }
 
 pub(crate) fn solve(input: &str) -> String {
-    to_base_5(
+    to_snafu(
         input
             .lines()
             .map(|l| l.trim())
             .filter(|l| !l.is_empty())
-            .map(from_base_5)
+            .map(from_snafu)
             .sum(),
     )
 }
@@ -62,11 +62,6 @@ mod tests {
         1=
         122
     ";
-
-    #[test]
-    fn test_to_base_5() {
-        assert_eq!(to_base_5(4890), "2=-1=0");
-    }
 
     #[test]
     fn test_solve() {
